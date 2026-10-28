@@ -8,8 +8,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Contabile Rosa">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="theme-color" content="#EEF1EF" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0F1513" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#FDF0F5">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" href="icons/favicon.png">
@@ -19,27 +18,17 @@
 <style>
 /* Layout: app a schermo intero; contenuto che scorre sopra una barra fissa in basso con il "+" rialzato; i moduli si aprono come fogli dal basso. */
 :root{
-  --bg:#EEF1EF; --surface:#FFFFFF; --sunk:#E3E8E5; --line:#D5DDD8; --line-soft:#E3E8E5;
-  --fg:#16201B; --muted:#5B6862;
-  --accent:#1E5C48; --accent-ink:#FFFFFF; --accent-soft:#D7E8E0; --on-accent-muted:#EAF4EF;
-  --hero:#1E5C48; --pos:#1E6B4F; --neg:#A8442A;
+  --bg:#FDF0F5; --surface:#FFFFFF; --sunk:#F6E1EA; --line:#EBD0DB; --line-soft:#F3E1E9;
+  --fg:#2B1A22; --muted:#6F5560;
+  --accent:#C72A66; --accent-ink:#FFFFFF; --accent-soft:#F9D9E6; --on-accent-muted:#FFF5F9;
+  --hero:#C72A66; --pos:#B8225B; --neg:#A8442A;
   --s1:#3D6FB0; --s2:#C9682A;
-  --in:#1E6B4F; --out:#B3372B; --warn:#8A5F00;
-  --scrim:rgba(18,26,22,.55); --shadow:rgba(20,60,45,.30);
+  --in:#B8225B; --out:#B3372B; --warn:#8A5F00;
+  --scrim:rgba(43,26,34,.55); --shadow:rgba(120,20,60,.30);
   --f-display:"Bricolage Grotesque","Avenir Next","Helvetica Neue",system-ui,sans-serif;
   --f-body:"Instrument Sans","Helvetica Neue",system-ui,sans-serif;
   color-scheme:light;
 }
-@media (prefers-color-scheme: dark){:root{
-  --bg:#0F1513; --surface:#18201D; --sunk:#222C28; --line:#2B3632; --line-soft:#232D29;
-  --fg:#E5ECE8; --muted:#97A59E;
-  --accent:#5DB592; --accent-ink:#0B1411; --accent-soft:#1D3229; --on-accent-muted:#EAF4EF;
-  --hero:#1E5C48; --pos:#6CC49A; --neg:#E58A6E;
-  --s1:#5A8BD4; --s2:#CF783A;
-  --in:#6CC49A; --out:#F0877A; --warn:#E3B454;
-  --scrim:rgba(0,0,0,.6); --shadow:rgba(0,0,0,.45);
-  color-scheme:dark;
-}}
 *{box-sizing:border-box}
 html,body{margin:0;height:100%}
 body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.4;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent;font-variant-numeric:tabular-nums;overscroll-behavior-y:none}
