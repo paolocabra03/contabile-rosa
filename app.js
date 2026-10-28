@@ -492,8 +492,7 @@ function vHome() {
   <section class="card" style="padding-bottom:8px;gap:4px">
     <div class="row"><span class="eyebrow">Ultimi movimenti</span><button class="link" data-goto="mov">Vedi tutti</button></div>
     ${recent.length ? `<div class="list">${recent.map(m => rowHtml(m, true)).join("")}</div>` : `<span class="empty">Ancora nessun movimento.</span>`}
-  </section>
-  ${vAccount()}`;
+  </section>`;
 }
 function vMov() {
   const q = S.movQuery.trim().toLowerCase();
@@ -567,17 +566,21 @@ function vCharts() {
   </section>
   <span class="sub">Trasferimenti tra conti esclusi. Le spese che coprono più mesi sono divise tra quei mesi.</span>`;
 }
-function vAccount() {
+// Profilo: il foglio collegato e l'accesso. Stava in fondo alla Home; qui lascia la Home solo ai soldi e centra il "+" nella barra.
+function vProfile() {
   return `
-  <section class="card">
-    <details class="more"><summary>Foglio e account<span>cambia foglio, esci</span></summary>
-      <div class="stack" style="gap:10px">
-        <button class="btn ghost" id="changeSheetAsk" data-ask="Tocca ancora per cambiare foglio">Cambia foglio</button>
-        <button class="btn danger" id="logoutAsk" data-ask="Tocca ancora per uscire">Esci dall'account Google</button>
-        <span class="sub" id="ver"></span>
-      </div>
-    </details>
-  </section>`;
+  <h1 class="h1">Profilo</h1>
+  <section class="det" aria-label="Il tuo foglio">
+    <div><span>Nome</span><b>${esc(nome()) || "—"}</b></div>
+    <div><span>Ultimo aggiornamento</span><b>${S.loadedAt ? new Date(S.loadedAt).toLocaleString("it-IT", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—"}</b></div>
+  </section>
+  <a class="btn ghost" href="https://docs.google.com/spreadsheets/d/${encodeURIComponent(sheetId())}/edit" target="_blank" rel="noopener">Apri il foglio Google</a>
+  <div class="stack" style="gap:10px">
+    <button class="btn ghost" id="changeSheetAsk" data-ask="Tocca ancora per cambiare foglio">Cambia foglio</button>
+    <button class="btn danger" id="logoutAsk" data-ask="Tocca ancora per uscire">Esci dall'account Google</button>
+  </div>
+  <span class="sub">I dati restano nel tuo foglio Google: cambiando foglio o uscendo si cancella solo la copia su questo telefono.</span>
+  <span class="sub" id="ver"></span>`;
 }
 
 /* ---------- render ---------- */
@@ -588,7 +591,7 @@ function render() {
   $("#nav").hidden = false;
   VIEW.clear();
   $$(".tab").forEach(t => t.setAttribute("aria-current", t.dataset.tab === S.tab ? "page" : "false"));
-  app.innerHTML = S.tab === "home" ? vHome() : S.tab === "mov" ? vMov() : vCharts();
+  app.innerHTML = S.tab === "home" ? vHome() : S.tab === "mov" ? vMov() : S.tab === "prof" ? vProfile() : vCharts();
   bind();
   document.body.classList.toggle("has-dock", S.tab === "mov");
 }
