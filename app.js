@@ -46,12 +46,6 @@ const parseInputAmount = (s, dec = 2) => {
   const k = Math.pow(10, dec);
   return Math.round(parseFloat(t) * k) / k;
 };
-// Le quote non sono mai a migliaia: il punto è sempre un decimale ("1.164" = 1,164). Fino a 6 decimali; NaN se non è un numero.
-const parseQuote = s => {
-  let t = String(s || "").trim().replace(/\s/g, "");
-  if (t.includes(",")) t = t.replace(/\./g, "").replace(",", ".");
-  return /^\d+(\.\d+)?$/.test(t) ? Math.round(parseFloat(t) * 1e6) / 1e6 : NaN;
-};
 const toDate = v => {
   if (typeof v === "number") { const d = new Date(1899, 11, 30); d.setDate(d.getDate() + Math.floor(v)); return d; }
   const m = String(v || "").match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
@@ -69,11 +63,10 @@ const shortDay = d => d.getDate() + " " + MESI_B[d.getMonth()];
 /* ---------- stato ---------- */
 const S = {
   tab: "home", loading: false, loadedAt: null, error: null,
-  mov: [], conti: [], pac: [],
-  set: { spesa: [], entrata: [], conti: [], categorie: ["Bisogno", "Desiderio"], etf: [], giorno: 15, contoDa: "", contoInv: "" },
+  mov: [], conti: [],
+  set: { spesa: [], entrata: [], conti: [], categorie: ["Bisogno", "Desiderio"] },
   movMonth: monthStart(new Date()), movFilter: "tutti", movQuery: "",
   chartMonth: monthStart(new Date()),
-  pacForm: false, valForm: false,
 };
 
 /* ---------- accesso Google ---------- */
@@ -114,7 +107,7 @@ function logout() {
   const t = store.get("mc-token");
   store.del("mc-token"); store.del("mc-cache"); store.del("mc-known");
   if (t) fetch("https://oauth2.googleapis.com/revoke?token=" + encodeURIComponent(t.value), { method: "POST" }).catch(() => {});
-  S.mov = []; S.conti = []; S.pac = []; S.loadedAt = null;
+  S.mov = []; S.conti = []; S.loadedAt = null;
   render();
 }
 
@@ -145,10 +138,10 @@ async function loadAll() {
   try {
     await flush();
     if (!token()) return;
-    const ranges = ["Movimenti!A2:G", "Conti!A2:E8", "Impostazioni!A1:J40", "PAC!A2:F"].map(r => "ranges=" + encodeURIComponent(r)).join("&");
+    const ranges = ["Movimenti!A2:G", "Conti!A2:E8", "Impostazioni!A1:D40"].map(r => "ranges=" + encodeURIComponent(r)).join("&");
     const p = await api("/values:batchGet?" + ranges + "&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER");
-    const [mov, conti, imp, pac] = p.valueRanges.map(v => v.values || []);
-    const raw = { mov, conti, imp, pac };
+    const [mov, conti, imp] = p.valueRanges.map(v => v.values || []);
+    const raw = { mov, conti, imp };
     apply(raw);
     S.error = null; S.loadedAt = Date.now();
     store.set("mc-cache", { raw, at: S.loadedAt });
@@ -160,7 +153,7 @@ async function loadAll() {
     if (reloadAfter) { reloadAfter = false; loadAll(); }
   }
 }
-function apply({ mov, conti, imp, pac }) {
+function apply({ mov, conti, imp }) {
   S.mov = mov.map((r, i) => ({ row: i + 2, d: toDate(r[0]), tipo: r[1] || "", tip: r[2] || "", imp: num(r[3]), cat: r[4] || "", conto: r[5] || "", desc: r[6] || "" }))
     .filter(m => m.d && m.imp);
   S.conti = conti.filter(r => r[0] && r[0] !== "Totale").map(r => ({ nome: r[0], saldo: num(r[4]) }));
@@ -168,24 +161,15 @@ function apply({ mov, conti, imp, pac }) {
   if (imp.length) {
     S.set.spesa = col(0); S.set.entrata = col(1); S.set.conti = col(2);
     if (col(3).length) S.set.categorie = col(3);
-    S.set.etf = imp.slice(1, 3).filter(r => r[5]).map(r => ({ nome: r[5], isin: r[6] || "", mensile: num(r[7]), valore: r[8] === undefined || r[8] === "" ? null : num(r[8]), agg: r[9] ? toDate(r[9]) : null }));
-    if (parseInt(imp[5]?.[7], 10)) S.set.giorno = parseInt(imp[5][7], 10);
-    if (imp[6]?.[7]) S.set.contoDa = imp[6][7];
-    if (imp[7]?.[7]) S.set.contoInv = imp[7][7];
-    // Righe 9 e 10 di Impostazioni: quote possedute (le scrivi tu) e prezzo per quota (formula Google Finance).
-    const q = imp[8]?.[7], pr = imp[9]?.[7];
-    S.set.quote = q === undefined || q === "" ? null : num(q);
-    S.set.prezzo = pr === undefined || pr === "" || typeof pr === "string" && pr.startsWith("#") ? null : num(pr);
   }
   if (!S.set.conti.length) S.set.conti = S.conti.map(c => c.nome);
-  S.pac = pac.map(r => ({ d: toDate(r[0]), etf: r[1] || "", imp: num(r[2]), quote: r[3] === "" || r[3] === undefined ? null : num(r[3]) })).filter(p => p.d && p.imp);
 }
 const append = (range, values) => api("/values/" + encodeURIComponent(range) + ":append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS", { method: "POST", body: JSON.stringify({ values }) });
 
 /* ---------- coda offline ----------
    Senza rete (o con l'accesso Google scaduto) un movimento finisce qui, salvato sul telefono,
    e parte appena possibile. Ogni elemento ha una o più scritture (ops); "done" ricorda quante
-   sono già arrivate al foglio, così un versamento PAC non viene scritto due volte. */
+   sono già arrivate al foglio, così un movimento in due parti non viene scritto due volte. */
 const Q = {
   all() { return store.get("mc-queue") || []; },
   save(q) { store.set("mc-queue", q); },
@@ -235,17 +219,6 @@ function pendingBanner() {
   const msg = err ? "Il foglio ha rifiutato l'invio: " + esc(err.error) + ". Controlla il foglio e riprova."
     : navigator.onLine ? "Sono salvati sul telefono. Li invio adesso." : "Sono salvati sul telefono e partono appena torna la rete. Saldi e totali si aggiornano dopo l'invio.";
   return `<div class="card" style="gap:8px;border-color:var(--warn)"><b style="font-weight:600">${n}</b><span class="sub">${msg}</span>${navigator.onLine ? `<button class="btn ghost" id="flushBtn">Invia ora</button>` : ""}${err ? `<button class="btn ghost" id="discardBtn" data-id="${esc(err.id)}">Scarta il movimento rifiutato</button>` : ""}</div>`;
-}
-
-// Se sul conto del PAC c'è meno della rata mensile, il prossimo versamento non può partire: avviso di ricaricare.
-function pacWarn() {
-  const plan = S.set.etf.reduce((a, e) => a + e.mensile, 0), da = S.set.contoDa;
-  const c = S.conti.find(x => x.nome === da);
-  if (!plan || !c || c.saldo >= plan) return "";
-  const np = nextPac(), hide = isHidden();
-  const msg = hide ? `Il saldo non basta per il versamento del ${np.d.getDate()} ${MESI[np.d.getMonth()]}.`
-    : `Ci sono ${eur(c.saldo)}, ma il versamento del ${np.d.getDate()} ${MESI[np.d.getMonth()]} ne preleva ${eur(plan)}. Aggiungi almeno ${eur(plan - c.saldo)}.`;
-  return `<div class="card" role="alert" style="gap:6px;border-color:var(--warn)"><b style="font-weight:600">Ricarica ${esc(da)}</b><span class="sub">${msg}</span></div>`;
 }
 
 /* ---------- calcoli ---------- */
@@ -412,11 +385,11 @@ function submitSetup(ev) {
 function changeSheet() {
   if (Q.all().length) { toast("Prima invia i movimenti in attesa, poi cambia foglio."); return; }
   store.del("mc-sheet"); store.del("mc-cache"); store.del("mc-known");
-  S.mov = []; S.conti = []; S.pac = []; S.loadedAt = null; S.error = null;
+  S.mov = []; S.conti = []; S.loadedAt = null; S.error = null;
   render();
 }
 // Andamento del patrimonio: si parte dal saldo di oggi e si tolgono, giorno per giorno all'indietro, i movimenti dei conti liquidi.
-// I trasferimenti verso l'ETF abbassano la liquidità, come nel totale. Con le cifre nascoste resta solo la forma della linea.
+// Con le cifre nascoste resta solo la forma della linea.
 let TREND = null;
 const PERIODI = [["1m", "1 mese", 30], ["6m", "6 mesi", 182], ["1a", "1 anno", 365]];
 function trendHtml(names, tot) {
@@ -481,9 +454,7 @@ function bindScrub() {
 }
 function vHome() {
   const now = new Date();
-  // Il conto investimenti (ETF) non entra nel patrimonio e non compare in Home: si vede nella schermata PAC.
-  const inv = S.set.contoInv;
-  const liquid = S.conti.filter(c => c.nome !== inv);
+  const liquid = S.conti;
   const tot = liquid.reduce((a, c) => a + c.saldo, 0);
   const st = stats(now);
   const spT = st.bis + st.des, pb = spT ? st.bis / spT * 100 : 0;
@@ -499,7 +470,6 @@ function vHome() {
   </div>
   ${banner()}
   ${pendingBanner()}
-  ${pacWarn()}
   <section class="hero" aria-label="Patrimonio">
     <div class="top" style="align-items:flex-start"><div class="stack"><span class="eyebrow">Patrimonio</span>
       <span class="big">${liquid.length ? money(tot) : "—"}</span>
@@ -522,7 +492,8 @@ function vHome() {
   <section class="card" style="padding-bottom:8px;gap:4px">
     <div class="row"><span class="eyebrow">Ultimi movimenti</span><button class="link" data-goto="mov">Vedi tutti</button></div>
     ${recent.length ? `<div class="list">${recent.map(m => rowHtml(m, true)).join("")}</div>` : `<span class="empty">Ancora nessun movimento.</span>`}
-  </section>`;
+  </section>
+  ${vAccount()}`;
 }
 function vMov() {
   const q = S.movQuery.trim().toLowerCase();
@@ -596,79 +567,8 @@ function vCharts() {
   </section>
   <span class="sub">Trasferimenti tra conti esclusi. Le spese che coprono più mesi sono divise tra quei mesi.</span>`;
 }
-function nextPac() {
-  const t = new Date(); t.setHours(0, 0, 0, 0);
-  let d = new Date(t.getFullYear(), t.getMonth(), S.set.giorno);
-  if (d < t) d = new Date(t.getFullYear(), t.getMonth() + 1, S.set.giorno);
-  return { d, days: Math.round((d - t) / 864e5) };
-}
-function vPac() {
-  const etf = S.set.etf, plan = etf.reduce((a, e) => a + e.mensile, 0);
-  const vers = n => S.pac.filter(p => p.etf === n).reduce((a, p) => a + p.imp, 0);
-  const totV = S.pac.reduce((a, p) => a + p.imp, 0);
-  const hasVal = etf.some(e => e.valore != null);
-  const totVal = etf.reduce((a, e) => a + (e.valore != null ? e.valore : vers(e.nome)), 0);
-  const np = nextPac();
-  const bal = n => S.conti.find(c => c.nome === n)?.saldo;
-  const colors = ["--accent", "--out"];
-  const labels = ["Azioni", "Obbligazioni"];
-  const single = etf.length === 1; // con un solo ETF la ripartizione e le ripetizioni non dicono niente
-  const hist = byDateDesc(S.pac.map((p, i) => ({ ...p, row: i }))).slice(0, 12);
+function vAccount() {
   return `
-  <div class="top"><div class="stack"><span class="eyebrow">Piano di accumulo · ${esc(S.set.contoDa)}</span><h1 class="h1">PAC</h1></div></div>
-  ${banner()}
-  ${pacWarn()}
-  <section class="hero" aria-label="Prossimo versamento">
-    <div class="stack"><span class="eyebrow">Prossimo versamento</span>
-      <span class="big" style="font-size:34px;line-height:1.1">${np.d.getDate()} ${MESI[np.d.getMonth()]}</span>
-      <span class="sub">${np.days === 0 ? "oggi" : np.days === 1 ? "domani" : "tra " + np.days + " giorni"} · ${M(plan)} da ${esc(S.set.contoDa)}</span></div>
-    <div class="tiles two">
-      <div class="tile"><span>${hasVal ? "Valore attuale" : "Conto " + esc(S.set.contoInv)}</span><b>${hasVal ? M(totVal) : (bal(S.set.contoInv) != null ? M(bal(S.set.contoInv)) : "—")}</b></div>
-      <div class="tile"><span>${hasVal ? "Versato" : "Liquidità " + esc(S.set.contoDa)}</span><b>${hasVal ? M(totV) : (bal(S.set.contoDa) != null ? M(bal(S.set.contoDa)) : "—")}</b></div>
-    </div>
-  </section>
-  <section class="card">
-    <span class="eyebrow">I tuoi ETF</span>
-    ${etf.map((e, i) => { const v = vers(e.nome); return `<div class="etf">
-      <div class="row"><span class="nm">${esc(e.nome)}</span><b style="white-space:nowrap">${M0(e.mensile)}/mese</b></div>
-      ${single ? (e.isin ? `<div class="row sub"><span>${esc(e.isin)}</span></div>` : "") : `<div class="row sub"><span>${esc(e.isin || "")}${e.isin ? " · " : ""}versato ${M(v)}</span><span>${plan ? Math.round(e.mensile / plan * 100) : 0}%</span></div>`}
-      ${e.valore != null ? `<div class="row sub"><span>valore ${M(e.valore)}</span><span class="${e.valore - v >= 0 ? "pos" : ""}">${e.valore - v >= 0 ? "+" : ""}${M(e.valore - v)}</span></div>` : ""}
-      ${i === 0 && S.set.quote != null ? `<div class="row sub"><span>${S.set.quote.toLocaleString("it-IT", { maximumFractionDigits: 6 })} quote${S.set.prezzo != null ? " · " + M(S.set.prezzo) + " a quota (Google Finance)" : ""}</span></div>` : ""}
-    </div>`; }).join("") || `<span class="empty">Aggiungi gli ETF nel foglio Impostazioni.</span>`}
-    ${etf.length > 1 ? `<div class="split">${etf.map((e, i) => `<i style="width:${plan ? e.mensile / plan * 100 : 0}%;background:var(${colors[i] || "--muted"})"></i>`).join("")}</div>
-    <div class="legend">${etf.map((e, i) => `<span><i class="sw" style="background:var(${colors[i] || "--muted"})"></i>${labels[i] || esc(e.nome)}</span>`).join("")}</div>` : ""}
-    <button class="btn ghost" id="toggleVal">${S.valForm ? "Chiudi" : "Aggiorna quote possedute"}</button>
-    ${S.valForm ? `<form id="valForm" class="stack" style="gap:12px">
-      <div class="field"><label for="quoteIn">Quote totali che vedi su ${esc(S.set.contoDa || "il broker")}</label><input class="inp" id="quoteIn" inputmode="decimal" placeholder="es. 1,164669" value="${S.set.quote != null ? S.set.quote.toLocaleString("it-IT", { maximumFractionDigits: 6 }) : ""}"></div>
-      <span class="sub" style="font-size:13px">Il valore si calcola da solo: quote × prezzo di oggi.</span>
-      <span class="err" id="valErr" role="alert"></span>
-      <button class="btn" type="submit" id="valSave">Salva quote</button></form>` : ""}
-  </section>
-  <section class="card">
-    <div class="row"><span class="eyebrow">Versamenti</span><span class="sub">${S.pac.length === 1 ? "1 registrato" : S.pac.length + " registrati"}</span></div>
-    ${hist.length ? `<div class="list">${hist.map(p => `${single
-      ? `<div class="mv single"><div class="t"><b>${p.d.getDate()} ${MESI[p.d.getMonth()]} ${p.d.getFullYear()}</b>${p.quote ? `<span>${p.quote.toLocaleString("it-IT", { maximumFractionDigits: 4 })} quote</span>` : ""}</div>`
-      : `<div class="mv"><span class="badge in" aria-hidden="true">${esc((p.etf.split(" ")[2] || "ET").slice(0, 2))}</span>
-      <div class="t"><b>${esc(p.etf)}</b><span>${p.d.getDate()} ${MESI[p.d.getMonth()]} ${p.d.getFullYear()}${p.quote ? " · " + p.quote.toLocaleString("it-IT", { maximumFractionDigits: 4 }) + " quote" : ""}</span></div>`}
-      <span class="a">${M(p.imp)}</span></div>`).join("")}</div>` : `<span class="sub" style="font-size:14px">Il primo arriva il ${np.d.getDate()} ${MESI[np.d.getMonth()]}. Registralo qui quando il broker lo esegue.</span>`}
-    <button class="btn ghost" id="togglePac">${S.pacForm ? "Chiudi" : "Registra versamento"}</button>
-    ${S.pacForm ? `<form id="pacForm" class="stack" style="gap:12px">
-      <div class="field"><label for="pacDate">Data</label><input class="inp" type="date" id="pacDate" value="${isoDate(new Date())}"></div>
-      ${etf.map((e, i) => `<div class="field"><span class="lab">${esc(e.nome)}</span><div class="pair" style="grid-template-columns:1fr 1fr">
-        <input class="inp" id="pacAmt${i}" inputmode="decimal" value="${fmt2(e.mensile)}" aria-label="Importo ${esc(e.nome)}">
-        <input class="inp" id="pacQ${i}" inputmode="decimal" placeholder="quote, se le sai" aria-label="Quote ${esc(e.nome)}"></div></div>`).join("")}
-      <label class="check"><input type="checkbox" id="pacTr" checked><span>Registra anche il trasferimento ${esc(S.set.contoDa)} → ${esc(S.set.contoInv)}, così i saldi dei conti restano giusti</span></label>
-      <span class="err" id="pacErr" role="alert"></span>
-      <button class="btn" type="submit" id="pacSave">Salva versamento</button></form>` : ""}
-  </section>
-  <section class="card">
-    <details class="more"><summary>Versato se continui<span>5, 10, 20, 40 anni</span></summary>
-      <div class="stack" style="gap:10px">
-        <div class="kv4">${[5, 10, 20, 40].map(y => `<div><span class="sub" style="font-size:12px">${y} anni</span><b>${MK(plan * 12 * y)}</b></div>`).join("")}</div>
-        <span class="sub" style="font-size:12px">Solo la somma dei versamenti, senza rendimento.</span>
-      </div>
-    </details>
-  </section>
   <section class="card">
     <details class="more"><summary>Foglio e account<span>cambia foglio, esci</span></summary>
       <div class="stack" style="gap:10px">
@@ -687,14 +587,10 @@ function render() {
   if (!authed) { $("#nav").hidden = true; app.innerHTML = vWelcome(); bind(); return; }
   $("#nav").hidden = false;
   VIEW.clear();
-  // Quello che hai scritto nei moduli PAC non si perde se la schermata si ridisegna (aggiornamento in background).
-  const typed = {};
-  $$("#pacForm input, #valForm input").forEach(i => { if (i.id) typed[i.id] = i.type === "checkbox" ? i.checked : i.value; });
   $$(".tab").forEach(t => t.setAttribute("aria-current", t.dataset.tab === S.tab ? "page" : "false"));
-  app.innerHTML = S.tab === "home" ? vHome() : S.tab === "mov" ? vMov() : S.tab === "charts" ? vCharts() : vPac();
+  app.innerHTML = S.tab === "home" ? vHome() : S.tab === "mov" ? vMov() : vCharts();
   bind();
   document.body.classList.toggle("has-dock", S.tab === "mov");
-  Object.entries(typed).forEach(([id, v]) => { const el = document.getElementById(id); if (!el) return; if (el.type === "checkbox") el.checked = v; else el.value = v; });
 }
 function spin(on) { const b = $("#refresh"); if (b) b.classList.toggle("spin", on); }
 function bind() {
@@ -715,10 +611,6 @@ function bind() {
   $$("[data-cm]").forEach(b => b.addEventListener("click", () => { S.chartMonth = fromIso(b.dataset.cm); render(); }));
   on("#prevC", "click", () => { S.chartMonth = addMonths(S.chartMonth, -1); render(); });
   on("#nextC", "click", () => { S.chartMonth = addMonths(S.chartMonth, 1); render(); });
-  on("#togglePac", "click", () => { S.pacForm = !S.pacForm; render(); });
-  on("#toggleVal", "click", () => { S.valForm = !S.valForm; render(); });
-  on("#pacForm", "submit", savePac);
-  on("#valForm", "submit", saveVal);
   on("#logout", "click", logout);
   // Azioni che cancellano la copia sul telefono: il secondo tocco conferma, la richiesta scade dopo 4 secondi.
   [["#changeSheetAsk", changeSheet], ["#logoutAsk", logout]].forEach(([sel, fn]) => {
@@ -729,7 +621,7 @@ function bind() {
       setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = old; b.classList.remove("armed"); } }, 4000);
     });
   });
-  $$("#changeSheet").forEach(b => b.addEventListener("click", changeSheet)); // in PAC può comparirne due (avviso e fondo pagina)
+  $$("#changeSheet").forEach(b => b.addEventListener("click", changeSheet));
   on("#setupForm", "submit", submitSetup);
   on("#flushBtn", "click", () => { flush().then(() => loadAll()); });
   const dis = $("#discardBtn");
@@ -826,10 +718,7 @@ function chips(list, cur, key, extra = "") {
 }
 function fields() {
   const tutti = S.set.conti.length ? S.set.conti : S.conti.map(c => c.nome);
-  // ETF e il conto del broker (Trade Republic) si usano solo nei trasferimenti: non ci si paga né ci si riceve uno stipendio.
-  const fuori = c => c === S.set.contoInv || c === S.set.contoDa;
-  if (A.tipo !== "Trasferimento" && !EDIT && fuori(A.conto)) A.conto = ""; // l'ultimo conto usato può essere uno di quelli esclusi
-  const conti = A.tipo === "Trasferimento" ? tutti : tutti.filter(c => !fuori(c) || (EDIT && c === A.conto));
+  const conti = tutti;
   let h = "", h2 = "", mesi = "";
   if (A.tipo === "Spesa") {
     const tl = recentFirst(S.set.spesa, "Spesa"), lungo = tl.length > 6;
@@ -1023,55 +912,10 @@ async function saveEdit(m, rows) {
   }
 }
 
-/* ---------- PAC ---------- */
-async function savePac(ev) {
-  ev.preventDefault();
-  const err = $("#pacErr"); err.textContent = "";
-  const d = $("#pacDate").value ? fromIso($("#pacDate").value) : new Date(), ds = sheetDate(d);
-  const rows = [];
-  let bad = "";
-  S.set.etf.forEach((e, i) => {
-    const aRaw = $("#pacAmt" + i).value.trim(), qRaw = $("#pacQ" + i).value.trim();
-    const imp = parseInputAmount(aRaw), q = parseQuote(qRaw);
-    // Un campo compilato ma non leggibile non si scarta in silenzio: si avvisa.
-    if (aRaw && !(imp > 0)) bad = "Importo non valido per " + e.nome + ".";
-    else if (qRaw && !(q > 0)) bad = "Quote non valide per " + e.nome + ": scrivi solo il numero, per esempio 0,5.";
-    else if (imp > 0) rows.push([ds, e.nome, imp, q > 0 ? q : "", q > 0 ? Math.round(imp / q * 100) / 100 : "", ""]);
-  });
-  if (bad) { err.textContent = bad; return; }
-  if (!rows.length) { err.textContent = "Inserisci almeno un importo."; return; }
-  const tot = rows.reduce((a, r) => a + r[2], 0);
-  const ops = [{ range: "PAC!A:F", rows }];
-  if ($("#pacTr").checked) ops.push({ range: "Movimenti!A:G", rows: [[ds, "Spesa", "Trasferimenti", tot, "Bisogno", S.set.contoDa, "PAC verso " + S.set.contoInv], [ds, "Entrata", "Trasferimenti", tot, "", S.set.contoInv, "PAC da " + S.set.contoDa]] });
-  // Lo passo sempre dalla coda: se la rete cade tra le due scritture, la seconda riparte senza ripetere la prima.
-  const it = { id: newId(), ops, done: 0, at: Date.now() };
-  Q.add(it);
-  S.pacForm = false;
-  if (!navigator.onLine || !token()) { render(); queueToast(); return; }
-  const btn = $("#pacSave"); btn.disabled = true; btn.textContent = "Salvo…";
-  await flush();
-  if (!Q.all().some(x => x.id === it.id)) { toast("Versamento di " + eur(tot) + " registrato"); loadAll(); }
-  else { render(); queueToast(); }
-}
 function queueToast() {
   if (navigator.onLine) { toast("Salvato sul telefono: rinnovo l'accesso a Google e lo invio"); setTimeout(() => login(true), 1200); }
   else toast("Sei offline: salvato sul telefono, lo invio appena torna la rete");
 }
-async function saveVal(ev) {
-  ev.preventDefault();
-  const err = $("#valErr"); err.textContent = "";
-  const q = parseQuote($("#quoteIn").value);
-  if (!(q > 0)) { err.textContent = "Scrivi il numero di quote, per esempio 1,164669."; return; }
-  const btn = $("#valSave"); btn.disabled = true; btn.textContent = "Salvo…";
-  try {
-    await api("/values/" + encodeURIComponent("Impostazioni!H9") + "?valueInputOption=RAW", { method: "PUT", body: JSON.stringify({ values: [[q]] }) });
-    S.valForm = false; toast("Quote aggiornate"); loadAll();
-  } catch (e) {
-    btn.disabled = false; btn.textContent = "Salva quote";
-    err.textContent = e instanceof AuthError ? "L'accesso a Google è scaduto: tocca aggiorna nella Home e riprova." : "Non ho potuto salvare: " + e.message;
-  }
-}
-
 /* ---------- avvio ---------- */
 $$(".tab").forEach(t => t.addEventListener("click", () => go(t.dataset.tab)));
 $("#openAdd").addEventListener("click", () => openAdd());
